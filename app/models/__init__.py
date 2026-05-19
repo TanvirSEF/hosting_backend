@@ -1,7 +1,8 @@
-# app/models/__init__.py
+# app/models/__init__.py updates
 from app.database.session import Base
 from app.models.user import User
 from app.models.hosting import HostingOrder
 from app.models.billing import Invoice, PaymentLog
+from app.models.domain import UserDomain # Added domain model reference
 
-__all__ = ["Base", "User", "HostingOrder", "Invoice", "PaymentLog"]
+__all__ = ["Base", "User", "HostingOrder", "Invoice", "PaymentLog", "UserDomain"]
