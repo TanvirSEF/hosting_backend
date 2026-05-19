@@ -68,4 +68,51 @@ class WHMService:
                 "message": f"Simulation active. Logic working perfectly: {str(e)}"
             }
 
+    async def suspend_account(self, username: str, reason: str = "Administrative action"):
+        return {
+            "success": False,
+            "simulator": True,
+            "action": "suspend",
+            "username": username,
+            "reason": reason,
+            "message": "Reserved for future WHM suspendacct integration.",
+        }
+
+    async def unsuspend_account(self, username: str):
+        return {
+            "success": False,
+            "simulator": True,
+            "action": "unsuspend",
+            "username": username,
+            "message": "Reserved for future WHM unsuspendacct integration.",
+        }
+
+    async def terminate_account(self, username: str):
+        return {
+            "success": False,
+            "simulator": True,
+            "action": "terminate",
+            "username": username,
+            "message": "Reserved for future WHM removeacct integration.",
+        }
+
+    async def reset_password(self, username: str):
+        return {
+            "success": False,
+            "simulator": True,
+            "action": "reset_password",
+            "username": username,
+            "message": "Reserved for future WHM password reset integration.",
+        }
+
+    async def change_package(self, username: str, plan_package: str):
+        return {
+            "success": False,
+            "simulator": True,
+            "action": "change_package",
+            "username": username,
+            "plan_package": plan_package,
+            "message": "Reserved for future WHM changepackage integration.",
+        }
+
 whm_service = WHMService()

@@ -17,6 +17,12 @@ def provision_cpanel_async(self, order_id: int, contact_email: str):
         order = db.query(HostingOrder).filter(HostingOrder.id == order_id).first()
         if not order:
             return "Order not found inside database row execution context."
+        if order.status not in (HostingStatus.PAYMENT_PENDING, HostingStatus.PROVISIONING):
+            return f"Order #{order_id} is not ready for provisioning."
+
+        order.status = HostingStatus.PROVISIONING
+        order.provision_error = None
+        db.commit()
 
         # Running async service module adapter inside Celery sync wrapper loop safely
         loop = asyncio.get_event_loop()
@@ -32,6 +38,7 @@ def provision_cpanel_async(self, order_id: int, contact_email: str):
             # Provisioning succeeded, update database metrics instantly
             order.username = whm_result.get("username")
             order.status = HostingStatus.ACTIVE
+            order.provision_error = None
             db.commit()
             return f"Successfully provisioned account for order #{order_id}"
         else:
@@ -39,6 +46,10 @@ def provision_cpanel_async(self, order_id: int, contact_email: str):
             raise Exception(whm_result.get("error", "Unknown automation engine failure."))
 
     except Exception as exc:
+        if "order" in locals() and order:
+            order.status = HostingStatus.PROVISION_FAILED
+            order.provision_error = str(exc)
+            db.commit()
         db.close()
         # Retries background operation safely after a 60-second backoff delay window
         raise self.retry(exc=exc, countdown=60)

@@ -4,10 +4,10 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.database.session import get_db
 from app.models.user import User
-from app.models.hosting import HostingOrder, HostingStatus
+from app.models.hosting import HostingOrder, HostingPackage, HostingStatus
 from app.models.billing import Invoice, InvoiceStatus
 from app.schemas.user import UserOut
-from app.schemas.hosting import HostingOrderOut
+from app.schemas.hosting import HostingOrderOut, HostingPackageCreate, HostingPackageOut
 from app.schemas.admin import AdminDashboardStats
 from app.api.admin_deps import require_admin_user  # Import our role-based guard
 
@@ -45,6 +45,42 @@ def list_all_registered_clients(
     Fetches and arrays all user rows currently saved inside the platform database.
     """
     return db.query(User).all()
+
+@router.post("/hosting-packages", response_model=HostingPackageOut, status_code=status.HTTP_201_CREATED)
+def create_hosting_package(
+    payload: HostingPackageCreate,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db)
+):
+    existing = (
+        db.query(HostingPackage)
+        .filter(
+            (HostingPackage.name == payload.name)
+            | (HostingPackage.whm_package_id == payload.whm_package_id)
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="Hosting package already exists.")
+
+    package = HostingPackage(
+        name=payload.name,
+        whm_package_id=payload.whm_package_id,
+        price_bdt=payload.price_bdt,
+        billing_period_days=payload.billing_period_days,
+        is_active=True,
+    )
+    db.add(package)
+    db.commit()
+    db.refresh(package)
+    return package
+
+@router.get("/hosting-packages", response_model=List[HostingPackageOut])
+def list_hosting_packages(
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db)
+):
+    return db.query(HostingPackage).all()
 
 @router.put("/hosting/{order_id}/toggle-status", response_model=HostingOrderOut)
 def administrative_hosting_status_override(
