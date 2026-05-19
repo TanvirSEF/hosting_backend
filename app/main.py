@@ -5,6 +5,7 @@ from app.database.session import Base, engine
 from app.models import user, hosting, billing 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.hosting import router as hosting_router
+from app.api.v1.billing import router as billing_router
 
 
 Base.metadata.create_all(bind=engine)
@@ -17,6 +18,7 @@ app = FastAPI(
 
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(hosting_router, prefix="/api/v1/hosting", tags=["Hosting"])
+app.include_router(billing_router, prefix="/api/v1/billing", tags=["Billing"])
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
