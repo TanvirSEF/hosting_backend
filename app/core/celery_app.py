@@ -7,7 +7,7 @@ celery_app = Celery(
     "nexhost_tasks",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
-    include=["app.tasks.hosting_tasks"],
+    include=["app.tasks.hosting_tasks", "app.tasks.hosting_tool_tasks"],
 )
 
 # Optional configuration updates for processing reliability
@@ -22,3 +22,4 @@ celery_app.conf.update(
 
 # Import task modules so workers launched with this Celery app register them.
 import app.tasks.hosting_tasks  # noqa: E402,F401
+import app.tasks.hosting_tool_tasks  # noqa: E402,F401
