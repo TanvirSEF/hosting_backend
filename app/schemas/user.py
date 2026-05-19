@@ -7,6 +7,7 @@ from typing import Optional
 class UserCreate(BaseModel):
     full_name: str
     email: EmailStr
+    phone_number: Optional[str] = None
     password: str
 
 # Login req payload wrapper
@@ -19,6 +20,7 @@ class UserOut(BaseModel):
     id: int
     full_name: str
     email: EmailStr
+    phone_number: Optional[str] = None
     is_active: bool
     is_admin: bool
     created_at: datetime

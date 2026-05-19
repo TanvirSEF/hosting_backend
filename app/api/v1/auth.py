@@ -17,11 +17,20 @@ def signup(user_in: UserCreate, db: Session = Depends(get_db)):
             status_code=400,
             detail="This email is already registered."
         )
+
+    if user_in.phone_number:
+        user = db.query(User).filter(User.phone_number == user_in.phone_number).first()
+        if user:
+            raise HTTPException(
+                status_code=400,
+                detail="This phone number is already registered."
+            )
     
     # 2. Object construction parsing encrypted password target mapping
     db_user = User(
         full_name=user_in.full_name,
         email=user_in.email,
+        phone_number=user_in.phone_number,
         hashed_password=get_password_hash(user_in.password)
     )
     db.add(db_user)

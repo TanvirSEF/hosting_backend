@@ -1,0 +1,7 @@
+Alembic migration files for the NexHost backend.
+
+Common commands:
+
+    alembic upgrade head
+    alembic downgrade -1
+    alembic revision --autogenerate -m "message"

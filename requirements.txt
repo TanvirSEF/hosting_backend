@@ -1,5 +1,6 @@
 ﻿annotated-doc==0.0.4
 annotated-types==0.7.0
+alembic==1.17.2
 anyio==4.13.0
 click==8.4.0
 colorama==0.4.6
