@@ -8,5 +8,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     JWT_SECRET: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
+    WHM_HOST: str = ""
+    WHM_USERNAME: str = ""
+    WHM_API_TOKEN: str = ""
 
 settings = Settings()
