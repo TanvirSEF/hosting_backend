@@ -1,15 +1,12 @@
 # app/core/celery_app.py
 from celery import Celery
-import os
-
-# Read Redis URL from environment variables or use local default loopback
-REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+from app.core.config import settings
 
 # Initialize Celery application engine instance
 celery_app = Celery(
     "nexhost_tasks",
-    broker=REDIS_URL,
-    backend=REDIS_URL,
+    broker=settings.REDIS_URL,
+    backend=settings.REDIS_URL,
     include=["app.tasks.hosting_tasks"],
 )
 

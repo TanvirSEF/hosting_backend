@@ -1,8 +1,6 @@
 # app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.database.session import Base, engine
-from app.models import user, hosting, billing 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.hosting import router as hosting_router
 from app.api.v1.billing import router as billing_router
@@ -10,8 +8,6 @@ from app.api.v1.domain import router as domain_router
 from app.api.v1.admin import router as admin_router
 from app.api.v1.health import router as diagnostics_router
 
-
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="NexHost Custom Automation API",

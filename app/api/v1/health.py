@@ -34,7 +34,7 @@ async def perform_system_wide_diagnostics(db: Session = Depends(get_db)):
     # 2. Evaluate Redis Task Queue Broker Subsystem Responsiveness
     start_time = time.time()
     try:
-        redis_client = redis.Redis.from_url("redis://127.0.0.1:6379/0")
+        redis_client = redis.Redis.from_url(settings.REDIS_URL)
         redis_client.ping()
         redis_latency = (time.time() - start_time) * 1000
         subsystems_report["redis_broker"] = {"status": "HEALTHY", "latency_ms": round(redis_latency, 2)}

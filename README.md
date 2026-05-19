@@ -52,6 +52,7 @@ Create a `.env` file in the project root:
 ```env
 DATABASE_URL=postgresql://postgres:your_password@127.0.0.1:5432/nexhost_db
 JWT_SECRET=replace_with_a_strong_secret_key
+REDIS_URL=redis://127.0.0.1:6379/0
 ```
 
 Make sure the PostgreSQL database exists:
@@ -143,5 +144,5 @@ Both endpoints return:
 ## Notes
 
 - Keep `.env` private and never commit real secrets.
-- `Base.metadata.create_all()` is currently used during app startup for early development.
-- Alembic should be used for database changes once tables already exist.
+- Alembic migrations are the source of truth for database schema changes.
+- Run `alembic upgrade head` before starting the API on a fresh database.
