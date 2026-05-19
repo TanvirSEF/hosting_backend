@@ -18,6 +18,13 @@ from app.models.hosting_tools import (
     WordPressInstall,
 )
 from app.models.whmcs import WhmcsImportBatch, WhmcsImportRow
+from app.models.security import (
+    AdminTwoFactorSetting,
+    AuditLog,
+    ProviderCredential,
+    RefreshTokenSession,
+    TokenBlacklist,
+)
 
 __all__ = [
     "Base",
@@ -41,4 +48,9 @@ __all__ = [
     "FileManagerEntry",
     "WhmcsImportBatch",
     "WhmcsImportRow",
+    "AuditLog",
+    "TokenBlacklist",
+    "RefreshTokenSession",
+    "AdminTwoFactorSetting",
+    "ProviderCredential",
 ]

@@ -2,6 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
+from app.middleware.rate_limit import InMemoryRateLimitMiddleware
 from app.api.v1.auth import router as auth_router
 from app.api.v1.hosting import router as hosting_router
 from app.api.v1.billing import router as billing_router
@@ -42,6 +43,7 @@ app.include_router(backups_router, prefix="/api/v1/backups", tags=["Backups"])
 app.include_router(usage_router, prefix="/api/v1/usage", tags=["Usage Analytics"])
 app.include_router(files_router, prefix="/api/v1/files", tags=["File Manager"])
 app.include_router(whmcs_router, prefix="/api/v1/admin/whmcs", tags=["WHMCS Migration"])
+app.add_middleware(InMemoryRateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,

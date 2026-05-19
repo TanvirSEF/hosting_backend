@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.database.session import get_db
 from app.models.automation import AutomationLog
+from app.models.security import AdminTwoFactorSetting, AuditLog, ProviderCredential
 from app.models.user import User
 from app.models.hosting import HostingOrder, HostingPackage, HostingStatus
 from app.models.billing import Invoice, InvoiceStatus
@@ -15,7 +16,16 @@ from app.schemas.billing import InvoiceOut, InvoiceStatusUpdate
 from app.schemas.domain import DomainOrderOut, DomainStatusUpdate
 from app.schemas.support import SupportTicketMessageCreate, SupportTicketOut, SupportTicketStatusUpdate
 from app.schemas.admin import AdminDashboardStats, AutomationLogOut
+from app.schemas.security import (
+    AuditLogOut,
+    ProviderCredentialCreate,
+    ProviderCredentialOut,
+    TwoFactorSetupOut,
+    TwoFactorUpdateRequest,
+)
 from app.api.admin_deps import require_admin_user  # Import our role-based guard
+from app.services.audit import write_audit_log
+from app.services.credential_crypto import encrypt_secret
 from app.tasks.hosting_tasks import provision_cpanel_async
 from app.tasks.hosting_tool_tasks import sync_usage_mock
 
@@ -75,6 +85,104 @@ def list_all_registered_clients(
     Fetches and arrays all user rows currently saved inside the platform database.
     """
     return db.query(User).all()
+
+@router.get("/audit-logs", response_model=List[AuditLogOut])
+def list_audit_logs(
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    return db.query(AuditLog).order_by(AuditLog.id.desc()).limit(200).all()
+
+@router.post("/security/2fa/setup", response_model=TwoFactorSetupOut)
+def setup_admin_two_factor(
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    setting = db.query(AdminTwoFactorSetting).filter(AdminTwoFactorSetting.user_id == admin.id).first()
+    if not setting:
+        setting = AdminTwoFactorSetting(user_id=admin.id, is_enabled=False, secret_hint="SIMULATED-2FA")
+        db.add(setting)
+    write_audit_log(db, "admin.2fa.setup", admin.id, "user", str(admin.id), "Admin 2FA setup placeholder created.")
+    db.commit()
+    return {
+        "enabled": setting.is_enabled,
+        "method": setting.method,
+        "secret_hint": setting.secret_hint or "SIMULATED-2FA",
+        "message": "2FA placeholder ready. Use code 000000 to enable in local mock mode.",
+    }
+
+@router.post("/security/2fa/enable", response_model=TwoFactorSetupOut)
+def enable_admin_two_factor(
+    payload: TwoFactorUpdateRequest,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    if payload.code != "000000":
+        raise HTTPException(status_code=400, detail="Invalid 2FA code for mock setup.")
+    setting = db.query(AdminTwoFactorSetting).filter(AdminTwoFactorSetting.user_id == admin.id).first()
+    if not setting:
+        setting = AdminTwoFactorSetting(user_id=admin.id, secret_hint="SIMULATED-2FA")
+        db.add(setting)
+    setting.is_enabled = True
+    write_audit_log(db, "admin.2fa.enable", admin.id, "user", str(admin.id), "Admin 2FA placeholder enabled.")
+    db.commit()
+    return {
+        "enabled": setting.is_enabled,
+        "method": setting.method,
+        "secret_hint": setting.secret_hint or "SIMULATED-2FA",
+        "message": "2FA placeholder enabled.",
+    }
+
+@router.post("/security/2fa/disable", response_model=TwoFactorSetupOut)
+def disable_admin_two_factor(
+    payload: TwoFactorUpdateRequest,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    if payload.code != "000000":
+        raise HTTPException(status_code=400, detail="Invalid 2FA code for mock setup.")
+    setting = db.query(AdminTwoFactorSetting).filter(AdminTwoFactorSetting.user_id == admin.id).first()
+    if not setting:
+        setting = AdminTwoFactorSetting(user_id=admin.id, secret_hint="SIMULATED-2FA")
+        db.add(setting)
+    setting.is_enabled = False
+    write_audit_log(db, "admin.2fa.disable", admin.id, "user", str(admin.id), "Admin 2FA placeholder disabled.")
+    db.commit()
+    return {
+        "enabled": setting.is_enabled,
+        "method": setting.method,
+        "secret_hint": setting.secret_hint or "SIMULATED-2FA",
+        "message": "2FA placeholder disabled.",
+    }
+
+@router.post("/provider-credentials", response_model=ProviderCredentialOut, status_code=status.HTTP_201_CREATED)
+def create_provider_credential(
+    payload: ProviderCredentialCreate,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    existing = db.query(ProviderCredential).filter(ProviderCredential.provider_name == payload.provider_name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Provider credential already exists.")
+    credential = ProviderCredential(
+        provider_name=payload.provider_name,
+        credential_type=payload.credential_type,
+        encrypted_secret=encrypt_secret(payload.secret),
+        created_by_user_id=admin.id,
+        is_active=True,
+    )
+    db.add(credential)
+    write_audit_log(db, "admin.provider_credential.create", admin.id, "provider_credential", payload.provider_name)
+    db.commit()
+    db.refresh(credential)
+    return credential
+
+@router.get("/provider-credentials", response_model=List[ProviderCredentialOut])
+def list_provider_credentials(
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    return db.query(ProviderCredential).order_by(ProviderCredential.id.desc()).all()
 
 @router.get("/support/tickets", response_model=List[SupportTicketOut])
 def list_support_tickets(

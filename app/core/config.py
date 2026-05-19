@@ -8,8 +8,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     JWT_SECRET: str
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
-    CORS_ORIGINS: str = "*"
+    CORS_ORIGINS: str = "http://127.0.0.1:3000,http://localhost:3000"
+    RATE_LIMIT_PER_MINUTE: int = 120
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    PROVIDER_CREDENTIAL_ENCRYPTION_KEY: str = ""
     WHM_HOST: str = ""
     WHM_USERNAME: str = ""
     WHM_API_TOKEN: str = ""
