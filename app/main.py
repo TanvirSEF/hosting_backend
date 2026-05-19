@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database.session import Base, engine
 from app.models import user, hosting, billing 
+from app.api.v1.auth import router as auth_router
 
 
 Base.metadata.create_all(bind=engine)
@@ -12,6 +13,8 @@ app = FastAPI(
     description="Backend automation engine for NexHost replacing WHMCS",
     version="1.0.0"
 )
+
+app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authentication"])
 
 app.add_middleware(
     CORSMiddleware,
