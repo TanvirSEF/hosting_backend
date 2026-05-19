@@ -22,3 +22,6 @@ class DomainOrderOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class DomainStatusUpdate(BaseModel):
+    status: DomainStatus

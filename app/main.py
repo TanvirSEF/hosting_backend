@@ -1,6 +1,7 @@
 # app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.core.config import settings
 from app.api.v1.auth import router as auth_router
 from app.api.v1.hosting import router as hosting_router
 from app.api.v1.billing import router as billing_router
@@ -23,7 +24,7 @@ app.include_router(admin_router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(diagnostics_router, prefix="/api/v1/health", tags=["Health Diagnostics"])
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

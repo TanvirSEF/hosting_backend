@@ -8,9 +8,16 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     JWT_SECRET: str
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    CORS_ORIGINS: str = "*"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
     WHM_HOST: str = ""
     WHM_USERNAME: str = ""
     WHM_API_TOKEN: str = ""
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        if self.CORS_ORIGINS.strip() == "*":
+            return ["*"]
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
 settings = Settings()

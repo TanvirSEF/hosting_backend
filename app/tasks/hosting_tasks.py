@@ -1,9 +1,22 @@
 # app/tasks/hosting_tasks.py
 from app.core.celery_app import celery_app
 from app.database.session import SessionLocal
+from app.models.automation import AutomationLog
 from app.models.hosting import HostingOrder, HostingStatus
 from app.services.whm import whm_service
 import asyncio
+
+
+def write_automation_log(db, order_id: int, action: str, status: str, message: str, raw_response: str = None):
+    db.add(
+        AutomationLog(
+            hosting_order_id=order_id,
+            action=action,
+            status=status,
+            message=message,
+            raw_response=raw_response,
+        )
+    )
 
 @celery_app.task(name="tasks.provision_cpanel_async", bind=True, max_retries=3)
 def provision_cpanel_async(self, order_id: int, contact_email: str):
@@ -22,6 +35,7 @@ def provision_cpanel_async(self, order_id: int, contact_email: str):
 
         order.status = HostingStatus.PROVISIONING
         order.provision_error = None
+        write_automation_log(db, order.id, "create_cpanel_account", "started", "Provisioning task started.")
         db.commit()
 
         # Running async service module adapter inside Celery sync wrapper loop safely
@@ -39,6 +53,14 @@ def provision_cpanel_async(self, order_id: int, contact_email: str):
             order.username = whm_result.get("username")
             order.status = HostingStatus.ACTIVE
             order.provision_error = None
+            write_automation_log(
+                db,
+                order.id,
+                "create_cpanel_account",
+                "success",
+                "Provisioning completed successfully.",
+                str(whm_result),
+            )
             db.commit()
             return f"Successfully provisioned account for order #{order_id}"
         else:
@@ -49,6 +71,13 @@ def provision_cpanel_async(self, order_id: int, contact_email: str):
         if "order" in locals() and order:
             order.status = HostingStatus.PROVISION_FAILED
             order.provision_error = str(exc)
+            write_automation_log(
+                db,
+                order.id,
+                "create_cpanel_account",
+                "failed",
+                str(exc),
+            )
             db.commit()
         db.close()
         # Retries background operation safely after a 60-second backoff delay window

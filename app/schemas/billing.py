@@ -25,3 +25,6 @@ class PaymentVerificationRequest(BaseModel):
     invoice_id: int
     gateway: PaymentGateway
     transaction_id: str  
+
+class InvoiceStatusUpdate(BaseModel):
+    status: InvoiceStatus

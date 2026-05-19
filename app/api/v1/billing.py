@@ -81,7 +81,13 @@ def verify_payment(payload: PaymentVerificationRequest, db: Session = Depends(ge
         hosting_order.status = HostingStatus.PROVISIONING
         hosting_order.provision_error = None
         db.flush()
-        provision_cpanel_async.delay(hosting_order.id, "automated-client@nexhost.com")
+        try:
+            provision_cpanel_async.delay(hosting_order.id, "automated-client@nexhost.com")
+        except Exception as exc:
+            hosting_order.status = HostingStatus.PROVISION_FAILED
+            hosting_order.provision_error = f"Failed to queue provisioning task: {exc}"
+            db.commit()
+            raise HTTPException(status_code=503, detail=hosting_order.provision_error)
         queued_order_id = hosting_order.id
     
     db.commit()
