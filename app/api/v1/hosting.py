@@ -5,18 +5,22 @@ from typing import List
 from app.database.session import get_db
 from app.models.hosting import HostingOrder, HostingStatus
 from app.schemas.hosting import HostingCreateRequest, HostingOrderOut
-from app.api.deps import get_current_user_id  # সিকিউর গার্ড ইমপোর্ট
-from app.services.whm import whm_service
+from app.api.deps import get_current_user_id
+from app.tasks.hosting_tasks import provision_cpanel_async # Import the task queue handle
 
 router = APIRouter()
 
-@router.post("/provision", response_model=HostingOrderOut, status_code=status.HTTP_201_CREATED)
+@router.post("/provision", response_model=HostingOrderOut, status_code=status.HTTP_202_ACCEPTED)
 async def provision_hosting(
     payload: HostingCreateRequest, 
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
-    
+    """
+    Refactored endpoint that processes instantly and passes long running operations
+    directly into our safe Redis + Celery job manager queue schema.
+    """
+    # 1. Immediately log order entry in database under PENDING state
     new_order = HostingOrder(
         user_id=user_id,
         domain=payload.domain,
@@ -28,25 +32,14 @@ async def provision_hosting(
     db.commit()
     db.refresh(new_order)
 
-    whm_result = await whm_service.create_cpanel_account(
-        domain=payload.domain,
-        plan_package=payload.package_name,
-        contact_email="automated-system@nexhost.com"
-    )
+    # 2. Push task parameters directly onto the broker pipeline queue
+    provision_cpanel_async.delay(new_order.id, "automated-client@nexhost.com")
 
-    if whm_result.get("success"):
-        new_order.username = whm_result.get("username")
-        new_order.status = HostingStatus.ACTIVE
-        db.commit()
-        db.refresh(new_order)
-        return new_order
-    else:
-        raise HTTPException(
-            status_code=500, 
-            detail=f"WHM automated provisioning error: {whm_result.get('error')}"
-        )
+    # 3. Return immediate response back to client dashboard layout framework wrapper
+    return new_order
 
 @router.get("/my-services", response_model=List[HostingOrderOut])
 def get_user_services(user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    """Returns array containing services owned by current active session client context."""
     services = db.query(HostingOrder).filter(HostingOrder.user_id == user_id).all()
     return services
