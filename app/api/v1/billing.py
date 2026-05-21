@@ -4,10 +4,16 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import List
 from app.database.session import get_db
-from app.models.billing import Invoice, PaymentLog, InvoiceStatus
+from app.models.billing import BillingReason, BillingServiceType, Invoice, PaymentLog, InvoiceStatus
+from app.models.domain import UserDomain
 from app.models.hosting import HostingOrder, HostingStatus
-from app.schemas.billing import InvoiceCreate, InvoiceOut, PaymentVerificationRequest
+from app.schemas.billing import AutoRenewUpdate, InvoiceCreate, InvoiceOut, PaymentVerificationRequest, RenewalInvoiceRequest
 from app.api.deps import get_current_user_id 
+from app.services.billing_lifecycle import (
+    apply_paid_invoice_lifecycle,
+    create_domain_renewal_invoice,
+    create_hosting_renewal_invoice,
+)
 from app.services.payment_gateway import payment_gateway_service
 from app.tasks.hosting_tasks import provision_cpanel_async
 
@@ -22,6 +28,7 @@ def create_invoice(payload: InvoiceCreate, user_id: int = Depends(get_current_us
         user_id=user_id,
         amount=payload.amount,
         status=InvoiceStatus.UNPAID,
+        billing_reason=BillingReason.MANUAL,
         due_at=due_date
     )
     db.add(db_invoice)
@@ -67,6 +74,7 @@ def verify_payment(payload: PaymentVerificationRequest, db: Session = Depends(ge
     
     invoice.status = InvoiceStatus.PAID
     invoice.paid_at = datetime.utcnow()
+    lifecycle_result = apply_paid_invoice_lifecycle(db, invoice)
 
     hosting_order = (
         db.query(HostingOrder)
@@ -96,7 +104,79 @@ def verify_payment(payload: PaymentVerificationRequest, db: Session = Depends(ge
         "status": "success",
         "message": f"Payment via {payload.gateway.upper()} verified successfully! Invoice #{invoice.id} status updated to PAID.",
         "queued_hosting_order_id": queued_order_id,
+        "lifecycle_result": lifecycle_result,
     }
+
+@router.post("/renew/hosting/{hosting_order_id}", response_model=InvoiceOut, status_code=status.HTTP_201_CREATED)
+def create_hosting_renewal(
+    hosting_order_id: int,
+    payload: RenewalInvoiceRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    order = (
+        db.query(HostingOrder)
+        .filter(HostingOrder.id == hosting_order_id, HostingOrder.user_id == user_id)
+        .first()
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Hosting service not found.")
+    if order.status == HostingStatus.TERMINATED:
+        raise HTTPException(status_code=400, detail="Terminated hosting services cannot be renewed.")
+    try:
+        invoice = create_hosting_renewal_invoice(db, order, days_valid=payload.days_valid)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    db.commit()
+    db.refresh(invoice)
+    return invoice
+
+@router.post("/renew/domain/{domain_id}", response_model=InvoiceOut, status_code=status.HTTP_201_CREATED)
+def create_domain_renewal(
+    domain_id: int,
+    payload: RenewalInvoiceRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    domain = db.query(UserDomain).filter(UserDomain.id == domain_id, UserDomain.user_id == user_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found.")
+    invoice = create_domain_renewal_invoice(db, domain, days_valid=payload.days_valid)
+    db.commit()
+    db.refresh(invoice)
+    return invoice
+
+@router.put("/auto-renew/hosting/{hosting_order_id}")
+def update_hosting_auto_renew(
+    hosting_order_id: int,
+    payload: AutoRenewUpdate,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    order = (
+        db.query(HostingOrder)
+        .filter(HostingOrder.id == hosting_order_id, HostingOrder.user_id == user_id)
+        .first()
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Hosting service not found.")
+    order.auto_renew = payload.auto_renew
+    db.commit()
+    return {"hosting_order_id": order.id, "auto_renew": order.auto_renew}
+
+@router.put("/auto-renew/domain/{domain_id}")
+def update_domain_auto_renew(
+    domain_id: int,
+    payload: AutoRenewUpdate,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    domain = db.query(UserDomain).filter(UserDomain.id == domain_id, UserDomain.user_id == user_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found.")
+    domain.auto_renew = payload.auto_renew
+    db.commit()
+    return {"domain_id": domain.id, "auto_renew": domain.auto_renew}
 
 @router.post("/webhooks/{gateway}")
 async def payment_webhook_placeholder(gateway: str):

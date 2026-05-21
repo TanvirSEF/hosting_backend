@@ -34,6 +34,7 @@ class DomainOrderOut(BaseModel):
     status: DomainStatus
     ns1: str
     ns2: str
+    auto_renew: bool
     expiry_date: datetime
 
     class Config:

@@ -1,5 +1,5 @@
 # app/models/domain.py
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Enum
+from sqlalchemy import Boolean, Column, Integer, String, ForeignKey, DateTime, Enum
 from sqlalchemy.sql import func
 from app.database.session import Base
 import enum
@@ -20,6 +20,7 @@ class UserDomain(Base):
     # Nameserver tracking configuration fields
     ns1 = Column(String, default="ns1.nexhost.com")
     ns2 = Column(String, default="ns2.nexhost.com")
+    auto_renew = Column(Boolean, default=True, nullable=False)
     
     # Important automation milestone tracking timestamps
     registration_date = Column(DateTime(timezone=True), server_default=func.now())

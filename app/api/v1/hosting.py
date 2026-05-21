@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import List
 from app.database.session import get_db
-from app.models.billing import Invoice, InvoiceStatus
+from app.models.billing import BillingReason, BillingServiceType, Invoice, InvoiceStatus
 from app.models.hosting import HostingOrder, HostingPackage, HostingStatus
 from app.schemas.hosting import HostingCreateRequest, HostingOrderOut, HostingPackageOut
 from app.api.deps import get_current_user_id
@@ -47,6 +47,8 @@ def create_hosting_order(
         user_id=user_id,
         amount=package.price_bdt,
         status=InvoiceStatus.UNPAID,
+        service_type=BillingServiceType.HOSTING,
+        billing_reason=BillingReason.INITIAL_PURCHASE,
         due_at=datetime.utcnow() + timedelta(days=7),
     )
     db.add(invoice)
@@ -62,6 +64,8 @@ def create_hosting_order(
         whm_package_id=package.whm_package_id,
     )
     db.add(new_order)
+    db.flush()
+    invoice.service_id = new_order.id
     db.commit()
     db.refresh(new_order)
 

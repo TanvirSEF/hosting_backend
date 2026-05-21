@@ -13,7 +13,7 @@ from app.models.domain import UserDomain
 from app.models.support import SupportTicket, SupportTicketMessage, SupportTicketStatus
 from app.schemas.user import UserOut
 from app.schemas.hosting import HostingOrderOut, HostingPackageCreate, HostingPackageOut
-from app.schemas.billing import InvoiceOut, InvoiceStatusUpdate
+from app.schemas.billing import BillingLifecycleRunOut, BillingLifecycleRunRequest, InvoiceOut, InvoiceStatusUpdate
 from app.schemas.domain import DomainOrderOut, DomainStatusUpdate
 from app.schemas.support import SupportTicketMessageCreate, SupportTicketOut, SupportTicketStatusUpdate
 from app.schemas.admin import (
@@ -40,11 +40,22 @@ from app.schemas.security import (
 from app.api.admin_deps import require_admin_user  # Import our role-based guard
 from app.core.security import get_password_hash
 from app.services.audit import write_audit_log
+from app.services.billing_lifecycle import (
+    apply_paid_invoice_lifecycle,
+    generate_renewal_invoices,
+    mark_due_reminders,
+    process_overdue_services,
+)
 from app.services.credential_crypto import encrypt_secret
 from app.services.domain_provider import domain_provider
 from app.services.whm import whm_service
 from app.tasks.hosting_tasks import provision_cpanel_async
 from app.tasks.hosting_tool_tasks import sync_usage_mock
+from app.tasks.billing_lifecycle_tasks import (
+    generate_renewal_invoices_task,
+    mark_due_reminders_task,
+    process_overdue_services_task,
+)
 
 router = APIRouter()
 
@@ -745,6 +756,60 @@ def list_invoices(
 ):
     return db.query(Invoice).order_by(Invoice.id.desc()).all()
 
+@router.post("/billing/lifecycle/run", response_model=BillingLifecycleRunOut)
+def run_billing_lifecycle_now(
+    payload: BillingLifecycleRunRequest,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    renewal_result = generate_renewal_invoices(db, days_ahead=payload.days_ahead)
+    reminders_marked = mark_due_reminders(db)
+    overdue_result = process_overdue_services(db)
+    write_audit_log(
+        db,
+        "admin.billing_lifecycle.run",
+        admin.id,
+        "billing_lifecycle",
+        "manual",
+        f"days_ahead: {payload.days_ahead}",
+    )
+    db.commit()
+    return {
+        **renewal_result,
+        "reminders_marked": reminders_marked,
+        **overdue_result,
+    }
+
+@router.post("/billing/lifecycle/queue")
+def queue_billing_lifecycle(
+    payload: BillingLifecycleRunRequest,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        renewal_task = generate_renewal_invoices_task.delay(payload.days_ahead)
+        reminder_task = mark_due_reminders_task.delay(3)
+        overdue_task = process_overdue_services_task.delay()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to queue billing lifecycle tasks: {exc}")
+    write_audit_log(
+        db,
+        "admin.billing_lifecycle.queue",
+        admin.id,
+        "billing_lifecycle",
+        "celery",
+        f"days_ahead: {payload.days_ahead}",
+    )
+    db.commit()
+    return {
+        "status": "queued",
+        "tasks": {
+            "renewals": renewal_task.id,
+            "reminders": reminder_task.id,
+            "overdue": overdue_task.id,
+        },
+    }
+
 @router.get("/invoices/{invoice_id}", response_model=InvoiceOut)
 def get_invoice(
     invoice_id: int,
@@ -770,6 +835,8 @@ def update_invoice_status(
     invoice.status = payload.status
     if payload.status == InvoiceStatus.PAID and not invoice.paid_at:
         invoice.paid_at = datetime.utcnow()
+    if payload.status == InvoiceStatus.PAID:
+        apply_paid_invoice_lifecycle(db, invoice)
     if payload.status != InvoiceStatus.PAID:
         invoice.paid_at = None
     write_audit_log(

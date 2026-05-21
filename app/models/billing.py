@@ -14,6 +14,15 @@ class PaymentGateway(str, enum.Enum):
     NAGAD = "nagad"
     SSLCOMMERZ = "sslcommerz"
 
+class BillingServiceType(str, enum.Enum):
+    HOSTING = "hosting"
+    DOMAIN = "domain"
+
+class BillingReason(str, enum.Enum):
+    MANUAL = "manual"
+    INITIAL_PURCHASE = "initial_purchase"
+    RENEWAL = "renewal"
+
 class Invoice(Base):
     __tablename__ = "invoices"
 
@@ -21,9 +30,14 @@ class Invoice(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     amount = Column(Numeric(10, 2), nullable=False)
     status = Column(Enum(InvoiceStatus), default=InvoiceStatus.UNPAID)
+    service_type = Column(Enum(BillingServiceType), nullable=True, index=True)
+    service_id = Column(Integer, nullable=True, index=True)
+    billing_reason = Column(Enum(BillingReason), default=BillingReason.MANUAL, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     due_at = Column(DateTime(timezone=True), nullable=False)
     paid_at = Column(DateTime(timezone=True), nullable=True)
+    reminder_sent_at = Column(DateTime(timezone=True), nullable=True)
+    overdue_processed_at = Column(DateTime(timezone=True), nullable=True)
 
 class PaymentLog(Base):
     __tablename__ = "payment_logs"

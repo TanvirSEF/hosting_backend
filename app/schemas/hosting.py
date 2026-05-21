@@ -45,6 +45,8 @@ class HostingOrderOut(BaseModel):
     username: Optional[str]
     status: HostingStatus
     provision_error: Optional[str]
+    expires_at: Optional[datetime]
+    auto_renew: bool
     created_at: datetime
 
     class Config:

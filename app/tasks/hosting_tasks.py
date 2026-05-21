@@ -2,9 +2,10 @@
 from app.core.celery_app import celery_app
 from app.database.session import SessionLocal
 from app.models.automation import AutomationLog
-from app.models.hosting import HostingOrder, HostingStatus
+from app.models.hosting import HostingOrder, HostingPackage, HostingStatus
 from app.services.whm import whm_service
 import asyncio
+from datetime import datetime, timedelta
 
 
 def write_automation_log(db, order_id: int, action: str, status: str, message: str, raw_response: str = None):
@@ -49,6 +50,10 @@ def provision_cpanel_async(self, order_id: int, contact_email: str):
         )
 
         if whm_result.get("success"):
+            package = db.query(HostingPackage).filter(HostingPackage.id == order.package_id).first()
+            if order.expires_at is None:
+                period_days = package.billing_period_days if package else 30
+                order.expires_at = datetime.utcnow() + timedelta(days=period_days)
             # Provisioning succeeded, update database metrics instantly
             order.username = whm_result.get("username")
             order.status = HostingStatus.ACTIVE
