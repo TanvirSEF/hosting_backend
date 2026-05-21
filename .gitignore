@@ -10,6 +10,9 @@ env/
 
 .env
 
+celerybeat-schedule*
+test_nexhost.db
+
 
 .vscode/
 .idea/

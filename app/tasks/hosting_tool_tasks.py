@@ -2,6 +2,7 @@
 from datetime import datetime
 from app.core.celery_app import celery_app
 from app.database.session import SessionLocal
+from app.models.hosting import HostingOrder, HostingStatus
 from app.models.hosting_tools import (
     BackupJob,
     BackupStatus,
@@ -110,5 +111,40 @@ def sync_usage_mock(hosting_order_id: int):
         )
         db.commit()
         return f"Usage sync completed for hosting order #{hosting_order_id}."
+    finally:
+        db.close()
+
+
+@celery_app.task(name="tasks.sync_all_usage_mock")
+def sync_all_usage_mock():
+    db = SessionLocal()
+    try:
+        orders = (
+            db.query(HostingOrder)
+            .filter(HostingOrder.status.in_([HostingStatus.ACTIVE, HostingStatus.SUSPENDED]))
+            .all()
+        )
+        synced = 0
+        for order in orders:
+            snapshot = HostingUsageSnapshot(
+                hosting_order_id=order.id,
+                disk_used_mb=512,
+                bandwidth_used_mb=2048,
+                inode_used=1200,
+                email_accounts=2,
+                databases=1,
+            )
+            db.add(snapshot)
+            log_tool_action(
+                db,
+                order.id,
+                "usage",
+                "scheduled_sync",
+                "success",
+                "Scheduled simulated resource usage sync completed.",
+            )
+            synced += 1
+        db.commit()
+        return {"synced_hosting_orders": synced}
     finally:
         db.close()
