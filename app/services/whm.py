@@ -70,49 +70,51 @@ class WHMService:
 
     async def suspend_account(self, username: str, reason: str = "Administrative action"):
         return {
-            "success": False,
+            "success": True,
             "simulator": True,
             "action": "suspend",
             "username": username,
             "reason": reason,
-            "message": "Reserved for future WHM suspendacct integration.",
+            "message": "Simulated WHM suspendacct completed. Replace with real WHM integration.",
         }
 
     async def unsuspend_account(self, username: str):
         return {
-            "success": False,
+            "success": True,
             "simulator": True,
             "action": "unsuspend",
             "username": username,
-            "message": "Reserved for future WHM unsuspendacct integration.",
+            "message": "Simulated WHM unsuspendacct completed. Replace with real WHM integration.",
         }
 
     async def terminate_account(self, username: str):
         return {
-            "success": False,
+            "success": True,
             "simulator": True,
             "action": "terminate",
             "username": username,
-            "message": "Reserved for future WHM removeacct integration.",
+            "message": "Simulated WHM removeacct completed. Replace with real WHM integration.",
         }
 
     async def reset_password(self, username: str):
+        password = self.generate_cpanel_password()
         return {
-            "success": False,
+            "success": True,
             "simulator": True,
             "action": "reset_password",
             "username": username,
-            "message": "Reserved for future WHM password reset integration.",
+            "password": password,
+            "message": "Simulated WHM password reset completed. Replace with real WHM integration.",
         }
 
     async def change_package(self, username: str, plan_package: str):
         return {
-            "success": False,
+            "success": True,
             "simulator": True,
             "action": "change_package",
             "username": username,
             "plan_package": plan_package,
-            "message": "Reserved for future WHM changepackage integration.",
+            "message": "Simulated WHM changepackage completed. Replace with real WHM integration.",
         }
 
 whm_service = WHMService()

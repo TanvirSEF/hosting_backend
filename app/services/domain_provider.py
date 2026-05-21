@@ -42,18 +42,20 @@ class DomainProviderService:
 
     async def renew_domain(self, domain_name: str, years: int):
         return {
-            "success": False,
+            "success": True,
+            "simulator": True,
             "domain": domain_name,
             "years": years,
-            "message": "Reserved for future registrar renewal integration.",
+            "message": "Simulated registrar renewal completed. Replace with real registrar integration.",
         }
 
     async def update_nameservers(self, domain_name: str, nameservers: list[str]):
         return {
-            "success": False,
+            "success": True,
+            "simulator": True,
             "domain": domain_name,
             "nameservers": nameservers,
-            "message": "Reserved for future registrar nameserver update integration.",
+            "message": "Simulated registrar nameserver update completed. Replace with real registrar integration.",
         }
 
     async def sync_domain_status(self, domain_name: str):

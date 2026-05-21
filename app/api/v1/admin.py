@@ -1,4 +1,5 @@
 # app/api/v1/admin.py
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -15,7 +16,20 @@ from app.schemas.hosting import HostingOrderOut, HostingPackageCreate, HostingPa
 from app.schemas.billing import InvoiceOut, InvoiceStatusUpdate
 from app.schemas.domain import DomainOrderOut, DomainStatusUpdate
 from app.schemas.support import SupportTicketMessageCreate, SupportTicketOut, SupportTicketStatusUpdate
-from app.schemas.admin import AdminDashboardStats, AutomationLogOut
+from app.schemas.admin import (
+    AdminDashboardStats,
+    AdminUserActiveUpdate,
+    AdminUserPasswordReset,
+    AdminUserRoleUpdate,
+    AdminUserUpdate,
+    AutomationLogOut,
+    DomainNameserverUpdate,
+    DomainRenewRequest,
+    HostingChangePackageRequest,
+    HostingPackageUpdate,
+    HostingStatusOverride,
+    HostingSuspendRequest,
+)
 from app.schemas.security import (
     AuditLogOut,
     ProviderCredentialCreate,
@@ -24,8 +38,11 @@ from app.schemas.security import (
     TwoFactorUpdateRequest,
 )
 from app.api.admin_deps import require_admin_user  # Import our role-based guard
+from app.core.security import get_password_hash
 from app.services.audit import write_audit_log
 from app.services.credential_crypto import encrypt_secret
+from app.services.domain_provider import domain_provider
+from app.services.whm import whm_service
 from app.tasks.hosting_tasks import provision_cpanel_async
 from app.tasks.hosting_tool_tasks import sync_usage_mock
 
@@ -48,6 +65,48 @@ def support_ticket_with_messages(db: Session, ticket: SupportTicket) -> dict:
         "created_at": ticket.created_at,
         "messages": messages,
     }
+
+
+def get_user_or_404(db: Session, user_id: int) -> User:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return user
+
+
+def get_package_or_404(db: Session, package_id: int) -> HostingPackage:
+    package = db.query(HostingPackage).filter(HostingPackage.id == package_id).first()
+    if not package:
+        raise HTTPException(status_code=404, detail="Hosting package not found.")
+    return package
+
+
+def get_order_or_404(db: Session, order_id: int) -> HostingOrder:
+    order = db.query(HostingOrder).filter(HostingOrder.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Hosting order entry not found.")
+    return order
+
+
+def get_domain_or_404(db: Session, domain_id: int) -> UserDomain:
+    domain = db.query(UserDomain).filter(UserDomain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain record not found.")
+    return domain
+
+
+def ensure_provider_success(result: dict, action: str) -> None:
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=result.get("error") or result.get("message") or f"{action} provider action failed.",
+        )
+
+
+def require_cpanel_username(order: HostingOrder) -> str:
+    if not order.username:
+        raise HTTPException(status_code=400, detail="Hosting order does not have a cPanel username yet.")
+    return order.username
 
 @router.get("/metrics", response_model=AdminDashboardStats)
 def get_admin_dashboard_overview(
@@ -85,6 +144,118 @@ def list_all_registered_clients(
     Fetches and arrays all user rows currently saved inside the platform database.
     """
     return db.query(User).all()
+
+@router.put("/users/{user_id}", response_model=UserOut)
+def update_user_profile(
+    user_id: int,
+    payload: AdminUserUpdate,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    user = get_user_or_404(db, user_id)
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        return user
+
+    if "email" in updates:
+        existing = db.query(User).filter(User.email == updates["email"], User.id != user.id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="This email is already registered.")
+    if "phone_number" in updates and updates["phone_number"]:
+        existing = db.query(User).filter(User.phone_number == updates["phone_number"], User.id != user.id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="This phone number is already registered.")
+
+    changes = []
+    for field, value in updates.items():
+        old_value = getattr(user, field)
+        if old_value != value:
+            changes.append(f"{field}: {old_value} -> {value}")
+            setattr(user, field, value)
+
+    if changes:
+        write_audit_log(
+            db,
+            "admin.user.update",
+            admin.id,
+            "user",
+            str(user.id),
+            "; ".join(changes),
+        )
+    db.commit()
+    db.refresh(user)
+    return user
+
+@router.put("/users/{user_id}/active", response_model=UserOut)
+def update_user_active_status(
+    user_id: int,
+    payload: AdminUserActiveUpdate,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    user = get_user_or_404(db, user_id)
+    if user.id == admin.id and not payload.is_active:
+        raise HTTPException(status_code=400, detail="Admins cannot disable their own account.")
+
+    old_status = user.is_active
+    user.is_active = payload.is_active
+    write_audit_log(
+        db,
+        "admin.user.active_update",
+        admin.id,
+        "user",
+        str(user.id),
+        f"is_active: {old_status} -> {user.is_active}",
+    )
+    db.commit()
+    db.refresh(user)
+    return user
+
+@router.put("/users/{user_id}/password", response_model=UserOut)
+def reset_user_password(
+    user_id: int,
+    payload: AdminUserPasswordReset,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    user = get_user_or_404(db, user_id)
+    user.hashed_password = get_password_hash(payload.password)
+    write_audit_log(
+        db,
+        "admin.user.password_reset",
+        admin.id,
+        "user",
+        str(user.id),
+        "Password reset by admin.",
+    )
+    db.commit()
+    db.refresh(user)
+    return user
+
+@router.put("/users/{user_id}/admin-role", response_model=UserOut)
+def update_user_admin_role(
+    user_id: int,
+    payload: AdminUserRoleUpdate,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    user = get_user_or_404(db, user_id)
+    if user.id == admin.id and not payload.is_admin:
+        raise HTTPException(status_code=400, detail="Admins cannot demote their own account.")
+
+    old_role = user.is_admin
+    user.is_admin = payload.is_admin
+    write_audit_log(
+        db,
+        "admin.user.role_update",
+        admin.id,
+        "user",
+        str(user.id),
+        f"is_admin: {old_role} -> {user.is_admin}",
+    )
+    db.commit()
+    db.refresh(user)
+    return user
 
 @router.get("/audit-logs", response_model=List[AuditLogOut])
 def list_audit_logs(
@@ -257,6 +428,15 @@ def create_hosting_package(
         is_active=True,
     )
     db.add(package)
+    db.flush()
+    write_audit_log(
+        db,
+        "admin.hosting_package.create",
+        admin.id,
+        "hosting_package",
+        str(package.id),
+        f"Created package {payload.name} mapped to {payload.whm_package_id}.",
+    )
     db.commit()
     db.refresh(package)
     return package
@@ -267,6 +447,95 @@ def list_hosting_packages(
     db: Session = Depends(get_db)
 ):
     return db.query(HostingPackage).all()
+
+@router.put("/hosting-packages/{package_id}", response_model=HostingPackageOut)
+def update_hosting_package(
+    package_id: int,
+    payload: HostingPackageUpdate,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    package = get_package_or_404(db, package_id)
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        return package
+
+    if "name" in updates:
+        existing = db.query(HostingPackage).filter(HostingPackage.name == updates["name"], HostingPackage.id != package.id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Hosting package name already exists.")
+    if "whm_package_id" in updates:
+        existing = db.query(HostingPackage).filter(
+            HostingPackage.whm_package_id == updates["whm_package_id"],
+            HostingPackage.id != package.id,
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="WHM package mapping already exists.")
+
+    changes = []
+    for field, value in updates.items():
+        old_value = getattr(package, field)
+        if old_value != value:
+            changes.append(f"{field}: {old_value} -> {value}")
+            setattr(package, field, value)
+
+    if changes:
+        write_audit_log(
+            db,
+            "admin.hosting_package.update",
+            admin.id,
+            "hosting_package",
+            str(package.id),
+            "; ".join(changes),
+        )
+    db.commit()
+    db.refresh(package)
+    return package
+
+@router.put("/hosting-packages/{package_id}/disable", response_model=HostingPackageOut)
+def disable_hosting_package(
+    package_id: int,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    package = get_package_or_404(db, package_id)
+    old_status = package.is_active
+    package.is_active = False
+    write_audit_log(
+        db,
+        "admin.hosting_package.disable",
+        admin.id,
+        "hosting_package",
+        str(package.id),
+        f"is_active: {old_status} -> {package.is_active}",
+    )
+    db.commit()
+    db.refresh(package)
+    return package
+
+@router.delete("/hosting-packages/{package_id}")
+def delete_hosting_package(
+    package_id: int,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    package = get_package_or_404(db, package_id)
+    linked_orders = db.query(HostingOrder).filter(HostingOrder.package_id == package.id).count()
+    if linked_orders:
+        raise HTTPException(status_code=400, detail="Cannot delete a package with linked hosting orders.")
+
+    package_name = package.name
+    db.delete(package)
+    write_audit_log(
+        db,
+        "admin.hosting_package.delete",
+        admin.id,
+        "hosting_package",
+        str(package_id),
+        f"Deleted unused package {package_name}.",
+    )
+    db.commit()
+    return {"status": "deleted"}
 
 @router.get("/hosting-orders", response_model=List[HostingOrderOut])
 def list_hosting_orders(
@@ -281,10 +550,7 @@ def get_hosting_order(
     admin: User = Depends(require_admin_user),
     db: Session = Depends(get_db)
 ):
-    order = db.query(HostingOrder).filter(HostingOrder.id == order_id).first()
-    if not order:
-        raise HTTPException(status_code=404, detail="Hosting order entry not found.")
-    return order
+    return get_order_or_404(db, order_id)
 
 @router.post("/hosting/{order_id}/retry-provisioning", response_model=HostingOrderOut)
 def retry_failed_provisioning(
@@ -292,14 +558,21 @@ def retry_failed_provisioning(
     admin: User = Depends(require_admin_user),
     db: Session = Depends(get_db)
 ):
-    order = db.query(HostingOrder).filter(HostingOrder.id == order_id).first()
-    if not order:
-        raise HTTPException(status_code=404, detail="Hosting order entry not found.")
+    order = get_order_or_404(db, order_id)
     if order.status != HostingStatus.PROVISION_FAILED:
         raise HTTPException(status_code=400, detail="Only failed provisioning orders can be retried.")
 
+    old_status = order.status
     order.status = HostingStatus.PROVISIONING
     order.provision_error = None
+    write_audit_log(
+        db,
+        "admin.hosting.retry_provisioning",
+        admin.id,
+        "hosting_order",
+        str(order.id),
+        f"status: {old_status} -> {order.status}",
+    )
     db.commit()
 
     try:
@@ -310,6 +583,136 @@ def retry_failed_provisioning(
         db.commit()
         raise HTTPException(status_code=503, detail=order.provision_error)
 
+    db.refresh(order)
+    return order
+
+@router.post("/hosting/{order_id}/suspend", response_model=HostingOrderOut)
+async def suspend_hosting_order(
+    order_id: int,
+    payload: HostingSuspendRequest,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    order = get_order_or_404(db, order_id)
+    username = require_cpanel_username(order)
+    result = await whm_service.suspend_account(username, payload.reason)
+    ensure_provider_success(result, "Suspend hosting")
+
+    old_status = order.status
+    order.status = HostingStatus.SUSPENDED
+    write_audit_log(
+        db,
+        "admin.hosting.suspend",
+        admin.id,
+        "hosting_order",
+        str(order.id),
+        f"status: {old_status} -> {order.status}; reason: {payload.reason}",
+    )
+    db.commit()
+    db.refresh(order)
+    return order
+
+@router.post("/hosting/{order_id}/unsuspend", response_model=HostingOrderOut)
+async def unsuspend_hosting_order(
+    order_id: int,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    order = get_order_or_404(db, order_id)
+    username = require_cpanel_username(order)
+    result = await whm_service.unsuspend_account(username)
+    ensure_provider_success(result, "Unsuspend hosting")
+
+    old_status = order.status
+    order.status = HostingStatus.ACTIVE
+    write_audit_log(
+        db,
+        "admin.hosting.unsuspend",
+        admin.id,
+        "hosting_order",
+        str(order.id),
+        f"status: {old_status} -> {order.status}",
+    )
+    db.commit()
+    db.refresh(order)
+    return order
+
+@router.post("/hosting/{order_id}/terminate", response_model=HostingOrderOut)
+async def terminate_hosting_order(
+    order_id: int,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    order = get_order_or_404(db, order_id)
+    username = require_cpanel_username(order)
+    result = await whm_service.terminate_account(username)
+    ensure_provider_success(result, "Terminate hosting")
+
+    old_status = order.status
+    order.status = HostingStatus.TERMINATED
+    write_audit_log(
+        db,
+        "admin.hosting.terminate",
+        admin.id,
+        "hosting_order",
+        str(order.id),
+        f"status: {old_status} -> {order.status}",
+    )
+    db.commit()
+    db.refresh(order)
+    return order
+
+@router.post("/hosting/{order_id}/reset-password")
+async def reset_hosting_password(
+    order_id: int,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    order = get_order_or_404(db, order_id)
+    username = require_cpanel_username(order)
+    result = await whm_service.reset_password(username)
+    ensure_provider_success(result, "Reset hosting password")
+
+    write_audit_log(
+        db,
+        "admin.hosting.reset_password",
+        admin.id,
+        "hosting_order",
+        str(order.id),
+        "cPanel password reset through provider boundary.",
+    )
+    db.commit()
+    return result
+
+@router.post("/hosting/{order_id}/change-package", response_model=HostingOrderOut)
+async def change_hosting_package(
+    order_id: int,
+    payload: HostingChangePackageRequest,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    order = get_order_or_404(db, order_id)
+    package = get_package_or_404(db, payload.package_id)
+    if not package.is_active:
+        raise HTTPException(status_code=400, detail="Cannot change to an inactive hosting package.")
+    username = require_cpanel_username(order)
+    result = await whm_service.change_package(username, package.whm_package_id)
+    ensure_provider_success(result, "Change hosting package")
+
+    old_package = order.package_name
+    old_whm_package_id = order.whm_package_id
+    order.package_id = package.id
+    order.package_name = package.name
+    order.whm_package_id = package.whm_package_id
+    write_audit_log(
+        db,
+        "admin.hosting.change_package",
+        admin.id,
+        "hosting_order",
+        str(order.id),
+        f"package: {old_package}/{old_whm_package_id} -> {package.name}/{package.whm_package_id}",
+    )
+    db.commit()
     db.refresh(order)
     return order
 
@@ -363,7 +766,20 @@ def update_invoice_status(
     invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found.")
+    old_status = invoice.status
     invoice.status = payload.status
+    if payload.status == InvoiceStatus.PAID and not invoice.paid_at:
+        invoice.paid_at = datetime.utcnow()
+    if payload.status != InvoiceStatus.PAID:
+        invoice.paid_at = None
+    write_audit_log(
+        db,
+        "admin.invoice.status_update",
+        admin.id,
+        "invoice",
+        str(invoice.id),
+        f"status: {old_status} -> {invoice.status}",
+    )
     db.commit()
     db.refresh(invoice)
     return invoice
@@ -381,10 +797,7 @@ def get_domain(
     admin: User = Depends(require_admin_user),
     db: Session = Depends(get_db)
 ):
-    domain = db.query(UserDomain).filter(UserDomain.id == domain_id).first()
-    if not domain:
-        raise HTTPException(status_code=404, detail="Domain record not found.")
-    return domain
+    return get_domain_or_404(db, domain_id)
 
 @router.put("/domains/{domain_id}/status", response_model=DomainOrderOut)
 def update_domain_status(
@@ -393,10 +806,72 @@ def update_domain_status(
     admin: User = Depends(require_admin_user),
     db: Session = Depends(get_db)
 ):
-    domain = db.query(UserDomain).filter(UserDomain.id == domain_id).first()
-    if not domain:
-        raise HTTPException(status_code=404, detail="Domain record not found.")
+    domain = get_domain_or_404(db, domain_id)
+    old_status = domain.status
     domain.status = payload.status
+    write_audit_log(
+        db,
+        "admin.domain.status_update",
+        admin.id,
+        "domain",
+        str(domain.id),
+        f"status: {old_status} -> {domain.status}",
+    )
+    db.commit()
+    db.refresh(domain)
+    return domain
+
+@router.put("/domains/{domain_id}/nameservers", response_model=DomainOrderOut)
+async def update_domain_nameservers(
+    domain_id: int,
+    payload: DomainNameserverUpdate,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    domain = get_domain_or_404(db, domain_id)
+    result = await domain_provider.update_nameservers(domain.domain_name, [payload.ns1, payload.ns2])
+    ensure_provider_success(result, "Update domain nameservers")
+
+    old_ns = f"{domain.ns1}, {domain.ns2}"
+    domain.ns1 = payload.ns1
+    domain.ns2 = payload.ns2
+    write_audit_log(
+        db,
+        "admin.domain.nameservers_update",
+        admin.id,
+        "domain",
+        str(domain.id),
+        f"nameservers: {old_ns} -> {domain.ns1}, {domain.ns2}",
+    )
+    db.commit()
+    db.refresh(domain)
+    return domain
+
+@router.post("/domains/{domain_id}/renew", response_model=DomainOrderOut)
+async def renew_domain(
+    domain_id: int,
+    payload: DomainRenewRequest,
+    admin: User = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+):
+    domain = get_domain_or_404(db, domain_id)
+    result = await domain_provider.renew_domain(domain.domain_name, payload.years)
+    ensure_provider_success(result, "Renew domain")
+
+    old_expiry = domain.expiry_date
+    baseline = domain.expiry_date
+    now = datetime.utcnow()
+    if baseline is None or baseline.replace(tzinfo=None) < now:
+        baseline = now
+    domain.expiry_date = baseline + timedelta(days=365 * payload.years)
+    write_audit_log(
+        db,
+        "admin.domain.renew",
+        admin.id,
+        "domain",
+        str(domain.id),
+        f"expiry_date: {old_expiry} -> {domain.expiry_date}; years: {payload.years}",
+    )
     db.commit()
     db.refresh(domain)
     return domain
@@ -404,19 +879,24 @@ def update_domain_status(
 @router.put("/hosting/{order_id}/toggle-status", response_model=HostingOrderOut)
 def administrative_hosting_status_override(
     order_id: int,
-    new_status: HostingStatus,
+    payload: HostingStatusOverride,
     admin: User = Depends(require_admin_user),
     db: Session = Depends(get_db)
 ):
     """
-    Allows admin operators to manually change any hosting service status row directly.
+    Emergency override for manual hosting status changes when provider workflows cannot be used.
     """
-    order = db.query(HostingOrder).filter(HostingOrder.id == order_id).first()
-    if not order:
-        raise HTTPException(status_code=404, detail="Hosting order entry not found.")
-        
-    # Update relational target record mapping fields safely
-    order.status = new_status
+    order = get_order_or_404(db, order_id)
+    old_status = order.status
+    order.status = payload.status
+    write_audit_log(
+        db,
+        "admin.hosting.status_override",
+        admin.id,
+        "hosting_order",
+        str(order.id),
+        f"status: {old_status} -> {order.status}",
+    )
     db.commit()
     db.refresh(order)
     return order
